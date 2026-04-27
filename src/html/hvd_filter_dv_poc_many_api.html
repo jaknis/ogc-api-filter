@@ -1,0 +1,1931 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OGC Feature Filter HVD – POC</title>
+
+  <!-- Externa bibliotek -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    /* ===== Globalt ===== */
+    /* Obs: div är avsiktligt exkluderat härifrån – Leaflet kräver content-box på sina interna div:ar */
+    *, *::before, *::after { box-sizing: border-box; }
+    body, select, button, input, textarea {
+      font-family: Fact, sans-serif;
+      font-size: 15px;
+    }
+    /* Återställ Leaflets egna behållare explicit */
+    .leaflet-container, .leaflet-container * { box-sizing: content-box; }
+
+    /* ===== Layout ===== */
+    #sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 200px;
+      height: 100vh;
+      overflow-y: scroll;
+      background-color: #410532;
+      color: white;
+      padding: 15px;
+      box-shadow: 2px 0 5px rgba(0, 0, 0, 0.2);
+    }
+
+    #sidebar h3 { margin-top: 0; }
+
+    #sidebar ul { list-style: none; padding: 0; }
+    #sidebar ul li { margin: 10px 0; }
+    #sidebar ul li a { text-decoration: none; color: #333; }
+    #sidebar ul li a:hover { color: #007bff; }
+
+    #main-content {
+      margin-left: 220px;
+      padding: 20px;
+    }
+
+    /* ===== Banner ===== */
+    .banner {
+      background-color: #410532;
+      color: white;
+      height: 50px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 15px;
+    }
+
+    /* ===== Info-ruta ===== */
+    #infoBox {
+      background-color: #d7dce0;
+      color: black;
+      padding: 10px;
+      border-radius: 5px;
+      border: 1px solid #ccc;
+      margin-top: 10px;
+      font-size: 14px;
+    }
+
+    /* ===== Filter ===== */
+    .filter-container { display: flex; gap: 10px; margin-bottom: 10px; }
+
+    #attributeDropdown {
+      background-color: #ffcccc;
+      border: 1px solid red;
+      max-height: 300px;
+    }
+
+    .valid-selection {
+      background-color: white !important;
+      border: 1px solid #ccc;
+    }
+
+    /* ===== Knappar ===== */
+    .search-button {
+      background-color: #410532;
+      color: white;
+      font-weight: bold;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    .search-button:hover { background-color: #c6538c; }
+
+    #copyButton,
+    #copyCsvBtn {
+      background-color: #410532;
+      color: white;
+      border: none;
+      padding: 5px 10px;
+      cursor: pointer;
+      border-radius: 5px;
+      font-size: 14px;
+    }
+    #copyButton:hover,
+    #copyCsvBtn:hover { background-color: #c6538c; }
+
+    /* ===== Tabell ===== */
+    table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+
+    /* ===== Felmeddelanden ===== */
+    .error { color: red; font-weight: bold; }
+
+    /* ===== Containers ===== */
+    #csvContainer,
+    #jsonContainer {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    /* ===== Kartvarning ===== */
+    #mapWarning {
+      display: none;
+      background: #fff3cd;
+      color: #856404;
+      padding: 8px 12px;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+
+    /* ===== Karta ===== */
+    #map {
+      position: relative !important;
+      z-index: 1 !important;
+      height: 500px;
+      width: 100%;
+      margin-top: 20px;
+    }
+
+    /* ===== Leaflet popup ===== */
+    .leaflet-popup-content-wrapper {
+      border: 2px solid black !important;
+      border-radius: 5px;
+    }
+    .leaflet-popup-content { font-size: 14px; color: #333; }
+
+    /* ===== Choices.js dropdown ===== */
+    .choices__list--dropdown {
+      max-height: 500px !important;
+      max-width: 500px !important;
+      overflow-y: auto !important;
+      position: absolute !important;
+      background: white;
+      z-index: 1000 !important;
+      border: 1px solid #ccc;
+    }
+
+    /* ===== Analysdiagram-dialog ===== */
+    #chartDialog {
+      position: fixed;
+      top: 8%;
+      left: 12%;
+      width: 760px;
+      height: auto;
+      min-height: 520px;
+      background: #faf8fb;
+      border: none;
+      border-radius: 10px;
+      box-shadow: 0 8px 40px rgba(65,5,50,0.18), 0 2px 8px rgba(0,0,0,0.10);
+      resize: both;
+      overflow: auto;
+      z-index: 10000;
+    }
+
+    #chartDialogHeader {
+      background: linear-gradient(90deg, #410532 80%, #6b1055 100%);
+      color: white;
+      padding: 10px 16px;
+      cursor: move;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      user-select: none;
+      border-radius: 10px 10px 0 0;
+      font-size: 15px;
+      font-weight: bold;
+      letter-spacing: 0.03em;
+    }
+
+    #chartDialogHeader button {
+      background: rgba(255,255,255,0.15);
+      color: white;
+      border: 1px solid rgba(255,255,255,0.4);
+      border-radius: 5px;
+      cursor: pointer;
+      padding: 4px 12px;
+      font-size: 13px;
+      transition: background 0.2s;
+    }
+    #chartDialogHeader button:hover { background: rgba(255,255,255,0.30); }
+
+    #chartBody {
+      padding: 14px 18px 18px;
+    }
+
+    .chart-selectors {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .chart-selectors label {
+      display: block;
+      font-weight: bold;
+      color: #410532;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .chart-selectors select {
+      width: 100%;
+      padding: 6px 8px;
+      border: 1.5px solid #c8a0bc;
+      border-radius: 6px;
+      font-size: 13px;
+      background: white;
+      color: #2a0220;
+      max-height: 110px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .chart-selectors select:focus { border-color: #410532; }
+
+    #chartCanvasWrapper {
+      background: white;
+      border-radius: 8px;
+      border: 1px solid #e8d8e4;
+      padding: 12px 10px 8px;
+      box-shadow: inset 0 1px 4px rgba(65,5,50,0.05);
+    }
+
+    #showChartBtn {
+      display: none;
+      background: #410532;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      margin-top: 15px;
+    }
+    #showChartBtn:hover { background: #5a0a46; }
+
+    /* ===== Toast-notis ===== */
+    #toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: bold;
+      color: white;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      z-index: 99999;
+    }
+    #toast.show   { opacity: 1; }
+    #toast.success { background: #2e7d32; }
+    #toast.error   { background: #c62828; }
+    #toast.info    { background: #1565c0; }
+
+    /* ===== Förbättrad laddningsindikator ===== */
+    #loadingOverlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.25);
+      z-index: 9000;
+      justify-content: center;
+      align-items: center;
+    }
+    #loadingOverlay.active { display: flex; }
+    #loadingBox {
+      background: white;
+      border: 2px solid #410532;
+      border-radius: 8px;
+      padding: 20px 32px;
+      text-align: center;
+      font-size: 16px;
+      font-weight: bold;
+      color: #410532;
+    }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 4px solid #e0c0d0;
+      border-top-color: #410532;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 10px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ===== Filterrad – felmarkering ===== */
+    .filter-container input.invalid {
+      border: 2px solid red;
+      background: #fff0f0;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ===== TOAST-NOTIS ===== -->
+  <div id="toast"></div>
+
+  <!-- ===== LADDNINGSOVERLAY ===== -->
+  <div id="loadingOverlay">
+    <div id="loadingBox">
+      <div class="spinner"></div>
+      <span id="loadingText">Laddar data, vänta...</span>
+    </div>
+  </div>
+
+  <!-- ===== SIDEBAR ===== -->
+  <div id="sidebar">
+    <a href="https://www.sgu.se">
+      <img src="https://www.sgu.se/globalassets/bilder/sgu-logotyp-sidfot.png" alt="SGU" style="width:120px;height:140px;">
+    </a>
+
+    <div id="infoBox">
+      <p><b>Observera:</b></p>
+      <p>APIet är begränsat till att returnera 50 000 poster. Anpassa därför filtreringen utifrån detta.
+        Rader från APIet som saknar värde i de sökta fälten kommer inte att komma med i utsökningen.
+        Om sökningen t.ex. använder kommun = Uppsala kommer poster där kommunnamnet saknas inte att komma med.
+        Ladda isåfall ner hela datamängden från bulknedladdningen för att vara säker på att alla resultat finns med.</p>
+    </div>
+
+    <p>API Direktåtkomst – OGC API – Features.
+      SGU använder standarden OGC API-Features för direktåtkomst av data i vektorformat.
+      Standarden ingår i OGC:s nya generation av API:er och är en utveckling av WFS.</p>
+
+    <div id="infoBox">
+      <h4>Länkar</h4>
+      <p><a href="https://ogcapi.ogc.org/features/" target="_blank">Läs mer om OGC API - Features</a></p>
+      <p><a href="https://www.sgu.se/produkter-och-tjanster/geologiska-data/" target="_blank">SGUs geologiska data</a></p>
+      <p><a href="importera_CSV_anrop_till_excel.pdf" target="_blank">Beskrivning hur CSV-filer från APIet importeras i Excel</a></p>
+    </div>
+  </div>
+
+  <!-- ===== HUVUDINNEHÅLL ===== -->
+  <div id="main-content">
+
+    <h2 style="border: 4px solid red; padding: 5px;">
+      Observera att denna sida är en POC (Proof of concept). SGU har ingen support på denna sida och den kan tas bort utan förvarning.
+    </h2>
+
+    <div class="banner">
+      <h1>POC – Tillgängliggörande av SGUs OGC APIer</h1>
+    </div>
+
+    <br>Sidan har tagits fram som en POC för tillgängliggörande av SGUs öppna APIer och förenkla filtrering av data för nedladdning.
+    <br>Denna version innehåller ett begränsat antal APIer som rör datavärdskapen för grundvatten och miljögifter.
+    <br>I produktbeskrivningarna för respektive produkt finns en lista över de attribut som kan användas för utsökningen och vad dessa betyder.
+    <br>Denna applikation kan komma att förbättras, byggas om eller tas bort och skall användas för att utvärdera och ge förslag på förbättringar och nya funktioner.
+
+    <p><b>Nytt i detta skript är att analysdata för grundvatten kan visas i graf.</b><br>
+    Välj API:et grundvattenkvalitet-analysresultat och filtrera ut en datamängd. Klicka sedan på <i>Visa diagram</i> under kartan.</p>
+
+    <!-- ===== API-VAL ===== -->
+    <label for="apiSelector"><h4>Välj HVD-produkt:</h4></label>
+    <select id="apiSelector" title="Välj HVD-produkt som du vill använda för utsökning av data">
+      <option value="https://api.sgu.se/oppnadata/grundvattenkvalitet-analysresultat-provplatser-v2/ogc/features/v1/collections/provplatser/items">
+        Grundvattenkvalitet-version 2.0 - Provplatser
+      </option>
+      <option value="https://api.sgu.se/oppnadata/grundvattenkvalitet-analysresultat-provplatser-v2/ogc/features/v1/collections/analysresultat/items">
+        Grundvattenkvalitet-version 2.0 - Analysresultat
+      </option>
+      <option value="https://api.sgu.se/oppnadata/miljogifter-analysresultat-provplatser/ogc/features/v1/collections/provplatser/items">
+        Miljögifter - Provplatser
+      </option>
+      <option value="https://api.sgu.se/oppnadata/miljogifter-analysresultat-provplatser/ogc/features/v1/collections/analysresultat/items">
+        Miljögifter - Analysresultat
+      </option>
+      <option value="https://api.sgu.se/oppnadata/grundvattennivaer-observerade/ogc/features/v1/collections/stationer/items">
+        Grundvattennivåer observerade - Stationer
+      </option>
+      <option value="https://api.sgu.se/oppnadata/grundvattennivaer-observerade/ogc/features/v1/collections/nivaer/items">
+        Grundvattennivåer observerade - Nivåer
+      </option>
+		 <!-- Grundvatten övrigt -->
+            <option value="https://api.sgu.se/oppnadata/grundvattennivaer-sgu-hype-omraden/ogc/features/v1/collections/omraden/items">
+				SGU HYPE områden för grundvattenivåer
+            </option>
+			
+        	<option value="https://api.sgu.se/oppnadata/kallor/ogc/features/v1/collections/kallor/items">
+				Källor
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/brunnar/ogc/features/v1/collections/brunnar/items">
+				Brunnar
+			</option>
+			
+            <option value="https://api.sgu.se/oppnadata/brunnar/ogc/features/v1/collections/brunnar-lager/items">
+				Brunnar-lagerföljder
+			</option>
+
+			<option value="https://api.sgu.se/oppnadata/borrhal/ogc/features/v1/collections/borrhal/items"> Borrhål - lokaler </option>
+
+			<option value="https://api.sgu.se/oppnadata/grundvattenforekomster/ogc/features/v1/collections/grundvattenforekomster/items">
+				Grundvattenförekomster
+			</option>
+						
+			<option value="https://api.sgu.se/oppnadata/genomslapplighet/ogc/features/v1/collections/genomslapplighet/items">
+				Genomsläpplighet
+			</option>
+			
+		 <!-- Mineralrättigheter -->	
+    		<option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/bearbetningskoncessioner-ansokta/items">
+				Ansökta bearbetningskoncessioner
+			</option>	
+	
+			<option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/bearbetningskoncessioner-beviljade/items">
+				Beviljade bearbetningskoncessioner
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/bearbetningskoncessioner-forfallna/items">
+			   Förfallna bearbetningskoncessioner
+			</option>			
+			
+			<option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/ut-metaller-industrimineral-ansokta/items">
+				Undersökningstillstånd - Metaller och industrimineral, ansökta
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/ut-metaller-industrimineral-beviljade/items">
+				Undersökningstillstånd - Metaller och industrimineral, beviljade
+			</option>
+			
+            <option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/ut-metaller-industrimineral-forfallna/items">
+			   Undersökningstillstånd - Metaller och industrimineral, förfallna
+			</option>
+			
+            <option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/bearbetningskoncessioner-beviljade/items">
+				Berbetningskoncession - barbetningskoncession, beviljande
+			</option>
+			
+            <option value="https://api.sgu.se/oppnadata/mineralrattigheter/ogc/features/v1/collections/bearbetningskoncessioner-forfallna/items">
+				Berbetningskoncession - barbetningskoncession, förfallna
+			</option>
+			
+		 <!-- Jordarter/jorddjup -->				
+			<option value="https://api.sgu.se/oppnadata/jorddjupsobservationer/ogc/features/v1/collections/jorddjupsobservationer/items">
+				jorddjupsobservationer - jorddjupsobservationer
+			</option>
+			
+			 <option value="https://api.sgu.se/oppnadata/jordarter25k-100k/ogc/features/v1/collections/punkter/items">
+				Jordarter25k-100k - punkter
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/jordartsanalyser/ogc/features/v1/collections/jordartsanalyser/items">
+				Jordartasanalyser - lokaler
+			</option>
+	
+			<option value="https://api.sgu.se/oppnadata/jordlagerfoljder/ogc/features/v1/collections/lagerfoljdslokaler/items">
+				Jordlagerföljder - lokaler
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/jordlagerfoljder/ogc/features/v1/collections/lagerinformation/items">
+				Jordlagerföljder - lagerinformation
+			</option>
+			
+		 <!-- Övrigt -->				
+			<option value="https://api.sgu.se/oppnadata/hogsta-kustlinjen/ogc/features/v1/collections/hk-punkt/items">
+				Högsta kustlinjen - punkter
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/hogsta-kustlinjen/ogc/features/v1/collections/hk-yta/items">
+				Högsta kustlinjen - yta
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/historiska-strandlinjer/ogc/features/v1/collections/strandlinjer-forandring/items">
+				Strandlinjens förändring (+/- 15 m) från 1940-1970 till 2010
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/historiska-strandlinjer/ogc/features/v1/collections/strandlinjer-tolkade/items">
+				Historiska strandlinjer
+			</option>
+			<option value="https://api.sgu.se/oppnadata/varmeledningsformaga-berggrund/ogc/features/v1/collections/varmeledningsformaga-berggrund-linjer/items">
+				Värmeledningsförmåga linjer
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/varmeledningsformaga-berggrund/ogc/features/v1/collections/varmeledningsformaga-berggrund-ytor/items">
+				Värmeledningsförmåga ytor
+			</option>
+
+			<option value="https://api.sgu.se/oppnadata/markgeokemi-atlas/ogc/features/v1/collections/moran-0063mm-ar-icpms/items">
+				Morän &lt; 0,063 mm kungsvattenlakning ICP-MS
+			</option>
+			
+			<option value="https://api.sgu.se/oppnadata/markgeokemi-atlas/ogc/features/v1/collections/moran-0063mm-ph/items">
+				Morän &lt; 0,063 mm pH
+			</option>
+	    
+	  
+    </select>
+
+    <p>
+    <button id="pdfButton" onclick="openPDF()" title="Ladda ner produktbeskrivningen för vald HVD-produkt">
+      <i class="fas fa-file-pdf" style="color:red; margin-right:6px;"></i>Visa produktbeskrivning (PDF)
+    </button>
+    <button id="zipButton" onclick="downloadZIP()" title="Ladda ner hela produkten som geopackage">
+      <i class="fas fa-file-archive" style="color:darkorange; margin-right:6px;"></i>Ladda ner all data (ZIP)
+    </button>
+
+    <!-- ===== ATTRIBUTVAL ===== -->
+    <h4>Välj vilka fält du vill visa</h4>
+    <p>Avmarkera rutan <i>Visa alla attribut</i> för att välja specifika fält. Urvalet styr vilka fält som visas i tabellen, kartan och Excel-nedladdningen. API-länkarna inkluderar alltid alla fält.</p>
+    <div id="attributeSelection"></div>
+
+    <!-- ===== FILTER ===== -->
+    <h4>Skapa filter</h4>
+    <p>Här skapar du ett filter för att söka data från OGC-API:et. Filtreringen är skiftlägeskänslig – <code>abc</code> matchar inte <code>Abc</code>.</p>
+    <p>Operatorn <b>IN</b> används för att matcha en lista av värden, t.ex.:<br>
+      <i>kommun <b>IN</b> 'UPPSALA','TÄBY','KNIVSTA'</i> eller <i>nationellt_provplatsid <b>IN</b> 116645,310653</i><br>
+      <b>IS NULL</b> och <b>IS NOT NULL</b> kan användas för att välja poster som saknar respektive har ett värde.</p>
+
+    <div id="filters"></div>
+    <button id="addFilterBtn" disabled>+ Lägg till filter</button>
+    <label>
+      <input type="checkbox" id="bboxCheckbox" title="Begränsa sökning till kartans utbredning (kräver geometri)">
+      Begränsa sökning till kartans utbredning
+    </label>
+    <p>
+    <button onclick="fetchFilteredData()" class="search-button" title="Sök med angivna filtervillkor">🔍 Sök</button>
+    <button onclick="clearFilters()" style="margin-left: 10px;">Rensa filter</button>
+
+    <p id="loadingIndicator" style="display:none;"></p><!-- Behålls för bakåtkompatibilitet -->
+    <p id="errorMsg" class="error"></p>
+    <div id="noRecordsMessage" style="color:orange; font-weight:bold;"></div>
+
+    <p>Obs: Kartan visar bara markörer för data med geometri!</p>
+
+    <div id="mapWarning"></div>
+    <p><span id="featureCounts"></span></p>
+
+    <button id="downloadMoreBtn" style="display:none; margin-top:10px;" onclick="downloadAllPages()">
+      ⬇️ 50 000 rader returnerade – ladda ner resterande
+    </button>
+
+    <!-- ===== KARTA ===== -->
+    <div id="map"></div>
+
+    <!-- ===== API-LÄNKAR ===== -->
+    <div id="apiLinkContainer">
+      <p><span id="apiLink"></span></p>
+      <div id="jsonContainer">
+        <button id="copyButton">📋 Copy JSON</button>
+      </div>
+      <div id="csvContainer">
+        <button id="copyCsvBtn">📋 Copy CSV</button>
+      </div>
+    </div>
+
+    <!-- ===== EXCEL-NEDLADDNING ===== -->
+    <button onclick="downloadExcel()">
+      <img src="https://cdn-icons-png.flaticon.com/512/732/732220.png" alt="Excel Icon" style="height:20px; vertical-align:middle; margin-right:5px;">
+      Ladda ner tabellen som Excel (.xlsx)
+    </button>
+
+    <!-- ===== LÄNKADE TABELLER ===== -->
+    <div id="analysisLinkContainer" style="display:none;">
+      <p><b>Ladda ner kopplade tabeller</b></p>
+      <b>CSV:</b><div id="analysisLink"></div><br>
+      <b>HTML:</b><div id="analysisLinkHtml"></div>
+      <div id="analysisLinkExcel"></div>
+    </div>
+
+    <div id="provplatserLinkContainer" style="display:none;">
+      <b>CSV:</b><div id="provplatserLink"></div>
+      <b>HTML:</b><div id="provplatserLinkHtml"></div>
+      <div id="provplatserLinkExcel"></div>
+    </div>
+
+    <div id="brunnsLagerLinkContainer" style="display:none;">
+      <b>CSV:</b><div id="brunnsLagerLink"></div>
+      <b>HTML:</b><div id="brunnsLagerLinkHtml"></div>
+      <div id="brunnsLagerLinkExcel"></div>
+    </div>
+
+    <!-- ===== DIAGRAM-KNAPP ===== -->
+    <div id="chartButtonContainer" style="margin-top:10px;">
+      <button id="showChartBtn" onclick="maybeShowAnalysisChart(window.lastFeatures)">
+        Visa diagram
+      </button>
+    </div>
+
+    <!-- ===== RESULTATTABELL ===== -->
+    <table id="resultsTable">
+      <thead id="resultsHead"></thead>
+      <tbody id="results"></tbody>
+    </table>
+
+  </div><!-- /main-content -->
+
+  <!-- ===== ANALYSDIAGRAM-DIALOG ===== -->
+  <div id="chartDialog" style="display:none;">
+    <div id="chartDialogHeader">
+      <span>📈 Analysdiagram</span>
+      <button onclick="closeChartDialog()">✕ Stäng</button>
+    </div>
+    <div id="chartBody">
+      <div class="chart-selectors">
+        <div>
+          <label id="provplatsLabel">Provplats / Station</label>
+          <select id="provplatsSelect" multiple></select>
+        </div>
+        <div id="paramWrapper">
+          <label>Parameter</label>
+          <select id="paramSelect" multiple></select>
+        </div>
+      </div>
+      <div id="chartCanvasWrapper">
+        <canvas id="analysisChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+
+  <script>
+  // ============================================================
+  //  UX – TOAST-NOTISER OCH LADDNINGSINDIKATOR
+  // ============================================================
+
+  let toastTimer = null;
+
+  /**
+   * Visar en toast-notis.
+   * @param {string} message - Meddelandet att visa
+   * @param {'success'|'error'|'info'} type - Typ av notis
+   * @param {number} duration - Visningstid i ms (standard 3000)
+   */
+  function showToast(message, type = "info", duration = 3000) {
+    const toast = document.getElementById("toast");
+    toast.textContent = message;
+    toast.className   = `show ${type}`;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toast.className = ""; }, duration);
+  }
+
+  /**
+   * Visar/döljer laddningsoverlayen.
+   * @param {boolean} visible
+   * @param {string} [text] - Valfri text att visa
+   */
+  function setLoading(visible, text = "Laddar data, vänta...") {
+    const overlay = document.getElementById("loadingOverlay");
+    const label   = document.getElementById("loadingText");
+    if (label) label.textContent = text;
+    overlay.classList.toggle("active", visible);
+  }
+
+
+  // ============================================================
+  //  KONSTANTER OCH GLOBALA VARIABLER
+  // ============================================================
+  const OPERATORS         = ["=", "LIKE", "<", ">", "<>", "IN", "IS NULL", "IS NOT NULL"];
+  const LOGICAL_OPERATORS = ["AND", "OR", "AND NOT", "OR NOT", "AND (", "OR("];
+  const SGU_COLOR         = "#410532";
+
+  // API-endpoints som stöder provplatslänkning
+  const PROVPLATSER_APIS  = [
+    "https://api.sgu.se/oppnadata/grundvattenkvalitet-analysresultat-provplatser/ogc/features/v1/collections/provplatser/items",
+    "https://api.sgu.se/oppnadata/miljogifter-analysresultat-provplatser/ogc/features/v1/collections/provplatser/items",
+    "https://api.sgu.se/oppnadata/grundvattenkvalitet-analysresultat-provplatser-v2/ogc/features/v1/collections/provplatser/items"
+  ];
+  const ANALYSRESULTAT_APIS = [
+    "https://api.sgu.se/oppnadata/grundvattenkvalitet-analysresultat-provplatser/ogc/features/v1/collections/analysresultat/items",
+    "https://api.sgu.se/oppnadata/miljogifter-analysresultat-provplatser/ogc/features/v1/collections/analysresultat/items",
+    "https://api.sgu.se/oppnadata/grundvattenkvalitet-analysresultat-provplatser-v2/ogc/features/v1/collections/analysresultat/items"
+  ];
+
+  let API_URL          = "";
+  let attributes       = [];
+  let geoJsonLayer     = null;
+  let provplatsLayer   = null;
+  let chartInstance    = null;
+  let chartDialogOpened = false;
+
+
+  // ============================================================
+  //  KARTA – INITIERING (sker i DOMContentLoaded nedan)
+  // ============================================================
+  let map = null;
+
+
+  // ============================================================
+  //  KARTA – HJÄLPFUNKTIONER
+  // ============================================================
+
+  function toggleUserLocation() {
+    if (isTracking) {
+      if (userLocationMarker) { map.removeLayer(userLocationMarker); userLocationMarker = null; }
+      isTracking = false;
+      return;
+    }
+    map.locate({ setView: true, maxZoom: 14 });
+    map.once("locationfound", (e) => {
+      if (userLocationMarker) map.removeLayer(userLocationMarker);
+      userLocationMarker = L.circleMarker(e.latlng, { radius: 8, color: "blue", fillColor: "#30f", fillOpacity: 0.8 }).addTo(map);
+      isTracking = true;
+    });
+    map.once("locationerror", () => alert("Kunde inte hitta din plats."));
+  }
+
+  function updateMap(features, selectedAttributes) {
+    if (!map || !geoJsonLayer) return;
+    geoJsonLayer.clearLayers();
+    if (!features.length) return;
+
+    geoJsonLayer = L.geoJSON(features, {
+      pointToLayer(feature, latlng) {
+        const marker = L.marker(latlng);
+        const labelText = buildPopupText(feature, selectedAttributes);
+        marker.bindPopup(labelText).on("popupopen", () => {
+          const el = marker.getPopup().getElement();
+          el.style.maxHeight  = "200px";
+          el.style.overflowY  = "auto";
+          if (!map.getBounds().contains(marker.getLatLng())) map.panTo(marker.getLatLng());
+        });
+        return marker;
+      },
+      style: () => ({ color: "blue", weight: 2, fillOpacity: 0.3 }),
+      onEachFeature(feature, layer) {
+        if (feature.geometry.type !== "Point") {
+          layer.bindPopup(buildPopupText(feature, selectedAttributes));
+        }
+      }
+    }).addTo(map);
+
+    const bounds = geoJsonLayer.getBounds();
+    if (bounds.isValid()) map.fitBounds(bounds);
+  }
+
+  /** Bygger HTML-text för kartpopup */
+  function buildPopupText(feature, selectedAttributes) {
+    return selectedAttributes.map(attr => {
+      const value = feature.properties[attr] ?? "N/A";
+      return typeof value === "string" && value.startsWith("https://")
+        ? `${attr}: <a href="${value}" target="_blank">link</a>`
+        : `${attr}: ${value}`;
+    }).join("<br>");
+  }
+
+  function updateProvplatsMap(features) {
+    if (provplatsLayer) { map.removeLayer(provplatsLayer); provplatsLayer = null; }
+    if (!features || !features.length) return;
+
+    provplatsLayer = L.geoJson(features, {
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 6, color: "#004b87", fillColor: "#0077cc", fillOpacity: 0.8 }),
+      onEachFeature(feature, layer) {
+        const p = feature.properties;
+        layer.bindPopup(`
+          <b>ProvplatsId:</b> ${p.nationellt_provplatsid}<br>
+          <b>Namn:</b> ${p.provplatsnamn || ""}<br>
+          <b>Kommun:</b> ${p.kommun || ""}<br>
+          <b>Län:</b> ${p.lan || ""}<br>
+          <b>Antal prov:</b> ${p.antal_prov || ""}
+        `);
+      }
+    }).addTo(map);
+
+    const bounds = provplatsLayer.getBounds();
+    if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 14 });
+  }
+
+
+  // ============================================================
+  //  ATTRIBUT – HÄMTA OCH VISA
+  // ============================================================
+
+  function changeAPI() {
+    API_URL = document.getElementById("apiSelector").value;
+    document.getElementById("filters").innerHTML = "";
+    fetchAttributes();
+  }
+
+  async function fetchAttributes() {
+    if (!API_URL) return;
+
+    document.getElementById("errorMsg").innerHTML = "";
+    document.getElementById("noRecordsMessage").innerHTML = "";
+
+    try {
+      const response = await fetch(API_URL.replace("/items", "/queryables"));
+      const data     = await response.json();
+
+      if (!data.properties || !Object.keys(data.properties).length) {
+        document.getElementById("noRecordsMessage").innerHTML = "API:et returnerade inga attribut.";
+        return;
+      }
+
+      attributes = Object.keys(data.properties);
+      updateAttributeSelection();
+
+      const geometrySupported = Object.entries(data.properties).some(([key, prop]) => {
+        const k = key.toLowerCase();
+        return k === "geometry" || k === "geom"
+          || prop?.type?.toLowerCase()   === "geometry"
+          || prop?.format?.toLowerCase() === "geometry";
+      });
+
+      document.getElementById("bboxCheckbox").disabled = !geometrySupported;
+      document.getElementById("bboxCheckbox").checked  = false;
+      document.getElementById("addFilterBtn").disabled  = false;
+
+    } catch (error) {
+      document.getElementById("errorMsg").innerHTML = "Fel vid hämtning av attribut: " + error.message;
+      console.error("Fel vid hämtning av attribut:", error);
+    }
+  }
+
+  function updateAttributeSelection() {
+    const container = document.getElementById("attributeSelection");
+    container.innerHTML = "";
+
+    const checkboxLabel = document.createElement("label");
+    checkboxLabel.innerHTML = `
+      <input type="checkbox" id="selectAllCheckbox"
+        title="Markera för att visa alla attribut; avmarkera för att välja specifika fält."
+        onchange="toggleSelectAllAttributes()"> Visa alla attribut`;
+    container.appendChild(checkboxLabel);
+
+    const select = document.createElement("select");
+    select.setAttribute("multiple", "multiple");
+    select.id = "attributeDropdown";
+
+    attributes.forEach(attr => {
+      const option = document.createElement("option");
+      option.value = attr;
+      option.textContent = attr;
+      select.appendChild(option);
+    });
+    container.appendChild(select);
+
+    const choices = new Choices(select, { removeItemButton: true, shouldSort: false, searchEnabled: true, placeholderValue: "Välj attribut" });
+    select.choicesInstance = choices;
+
+    select.addEventListener("change", () => {
+      const cb = document.getElementById("selectAllCheckbox");
+      if (cb.checked) { cb.checked = false; toggleSelectAllAttributes(); }
+    });
+  }
+
+  function toggleSelectAllAttributes() {
+    const checkbox = document.getElementById("selectAllCheckbox");
+    const select   = document.getElementById("attributeDropdown");
+    select.innerHTML = "";
+
+    if (checkbox.checked) {
+      const option = document.createElement("option");
+      option.value = "ALL_ATTRIBUTES";
+      option.textContent = "Alla attribut";
+      option.selected = true;
+      select.appendChild(option);
+    } else {
+      attributes.forEach(attr => {
+        const option = document.createElement("option");
+        option.value = attr;
+        option.textContent = attr;
+        select.appendChild(option);
+      });
+    }
+
+    if (select.choicesInstance) select.choicesInstance.destroy();
+    const choices = new Choices(select, { removeItemButton: true, shouldSort: false, searchEnabled: true, placeholderValue: "Välj attribut" });
+    select.choicesInstance = choices;
+  }
+
+
+  // ============================================================
+  //  FILTER – LÄGG TILL OCH BYGGA FRÅGA
+  // ============================================================
+
+  function addFilter() {
+    if (!attributes.length) { alert("Attribut har inte laddats ännu. Vänta och försök igen."); return; }
+
+    const div = document.createElement("div");
+    div.className = "filter-container";
+    div.innerHTML = `
+      <select class="logic-operator" title="Kombineringsoperator">
+        ${LOGICAL_OPERATORS.map(op => `<option value="${op}">${op}</option>`).join("")}
+      </select>
+      <select class="attribute" title="Välj attribut att filtrera mot">
+        ${attributes.map(attr => `<option value="${attr}">${attr}</option>`).join("")}
+      </select>
+      <select class="operator" title="Jämförelseoperator">
+        ${OPERATORS.map(op => `<option value="${op}">${op}</option>`).join("")}
+      </select>
+      <input type="text" class="value" placeholder="Värde"
+        title="Ange ett värde. Texten är skiftlägeskänslig. Lämna tomt för IS NULL / IS NOT NULL.">
+      <select class="closing-parenthesis" title="Avslutande parentes">
+        <option value=""></option>
+        <option value=")">)</option>
+      </select>
+    `;
+    document.getElementById("filters").appendChild(div);
+  }
+
+  function clearFilters() {
+    const filters = document.querySelectorAll(".filter-container");
+    filters.forEach((filter, index) => {
+      if (index === 0) {
+        filter.querySelector(".logic-operator").value          = "AND";
+        filter.querySelector(".attribute").selectedIndex      = 0;
+        filter.querySelector(".operator").selectedIndex       = 0;
+        filter.querySelector(".value").value                  = "";
+        filter.querySelector(".closing-parenthesis").value    = "";
+      } else {
+        filter.remove();
+      }
+    });
+
+    ["resultsHead", "results", "featureCounts", "errorMsg", "noRecordsMessage"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = "";
+    });
+
+    ["analysisLinkContainer", "linkedDataContainer", "provplatsLinkContainer", "brunnsLagerLinkContainer"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = "none";
+    });
+
+    ["analysisLink", "analysisLinkHtml", "analysisLinkExcel", "provplatsLink"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = "";
+    });
+
+    if (geoJsonLayer?.clearLayers) geoJsonLayer.clearLayers();
+  }
+
+  function getBboxFilter() {
+    const checkbox = document.getElementById("bboxCheckbox");
+    if (!checkbox?.checked || !map) return "";
+    const b = map.getBounds();
+    return `&bbox=${[b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].join(",")}`;
+  }
+
+  /** Escapar ett filtervärde för att förhindra CQL-injection */
+  function escapeCqlValue(value) {
+    // Ersätt enkla citattecken med dubbla (CQL-standard för escaping)
+    return value.replace(/'/g, "''");
+  }
+
+  /** Bygger CQL-filtersträngen från filterraderna */
+  function buildFilterString() {
+    const filters = Array.from(document.querySelectorAll(".filter-container"));
+    const raw = filters.map((filter, index) => {
+      const logicOp    = index > 0 ? filter.querySelector(".logic-operator").value : "";
+      const attribute  = filter.querySelector(".attribute").value;
+      const operator   = filter.querySelector(".operator").value;
+      const rawValue   = filter.querySelector(".value").value;
+      const closeParen = filter.querySelector(".closing-parenthesis").value;
+
+      // Tillåt inga tecken som kan bryta ut ur filtret (förutom IN-listor)
+      const safeValue = operator === "IN" ? rawValue : escapeCqlValue(rawValue);
+
+      let condition;
+      if (operator === "LIKE")    condition = `${attribute} LIKE '%${safeValue}%'`;
+      else if (operator === "IN") condition = `${attribute} IN (${rawValue})`;  // IN-värden hanteras som-är (kommaseparerade)
+      else                        condition = `${attribute} ${operator} '${safeValue}'`;
+
+      if (closeParen === ")") condition += ")";
+      return index > 0 ? `${logicOp} ${condition}` : condition;
+    }).join(" ");
+
+    // Rensa bort värde-delen vid IS NULL / IS NOT NULL
+    return raw.replace(/(IS\s+(NOT\s+)?NULL)(\s*'[^']*'|\s*)/gi, "$1");
+  }
+
+  /**
+   * Validerar filterrader innan sökning.
+   * Returnerar true om allt är ok, annars false (markerar ogiltiga fält).
+   */
+  function validateFilters() {
+    let valid = true;
+    document.querySelectorAll(".filter-container").forEach(filter => {
+      const operator = filter.querySelector(".operator").value;
+      const valueEl  = filter.querySelector(".value");
+      const value    = valueEl.value.trim();
+
+      // Rensa tidigare felmarkering
+      valueEl.classList.remove("invalid");
+
+      // Värde krävs för operatorer som inte är IS NULL / IS NOT NULL
+      if (!["IS NULL", "IS NOT NULL"].includes(operator) && value === "") {
+        valueEl.classList.add("invalid");
+        valid = false;
+      }
+    });
+    return valid;
+  }
+
+
+  // ============================================================
+  //  HÄMTA DATA FRÅN API
+  // ============================================================
+
+  async function fetchFilteredData() {
+    // Validera filter innan anrop
+    if (!validateFilters()) {
+      showToast("Fyll i värde för alla filterrader (eller använd IS NULL / IS NOT NULL).", "error", 4000);
+      return;
+    }
+
+    const warn = document.getElementById("mapWarning");
+    if (warn) warn.style.display = "none";
+    document.getElementById("errorMsg").innerHTML         = "";
+    document.getElementById("noRecordsMessage").innerHTML = "";
+
+    let selectedAttributes = Array.from(document.getElementById("attributeDropdown").selectedOptions)
+      .map(opt => opt.value);
+    if (selectedAttributes.includes("ALL_ATTRIBUTES")) selectedAttributes = [...attributes];
+
+    const filterString = buildFilterString();
+    const bboxParam    = getBboxFilter();
+    const fullApiUrl   = filterString.trim()
+      ? `${API_URL}?filter=${encodeURIComponent(filterString)}${bboxParam}&f=application/json`
+      : `${API_URL}?${bboxParam}&f=application/json`;
+
+    setLoading(true, "Hämtar data från API...");
+    console.log("Anropar API:", fullApiUrl);
+
+    try {
+      const response = await fetch(fullApiUrl);
+
+      if (!response.ok) {
+        const statusText = {
+          400: "Ogiltigt filter (400). Kontrollera filteruttrycket.",
+          403: "Åtkomst nekad (403).",
+          404: "API-endpoint hittades inte (404).",
+          500: "Serverfel hos API:et (500). Försök igen senare.",
+          503: "API:et är tillfälligt otillgängligt (503). Försök igen om en stund."
+        }[response.status] || `API svarade med status: ${response.status}`;
+        throw new Error(statusText);
+      }
+
+      const result = await response.json();
+
+      if (!result.features?.length) {
+        document.getElementById("noRecordsMessage").innerText = "Inga resultat hittades för det angivna filtret.";
+        document.getElementById("analysisLink").innerHTML = "";
+        showToast("Inga resultat hittades.", "info");
+        return;
+      }
+
+      const features = result.features;
+      window.lastFeatures       = features;
+      window.selectedAttributes = selectedAttributes;
+
+      // Visar matchnings-statistik och eventuell paging-knapp
+      const { numberMatched = "N/A", numberReturned = "N/A" } = result;
+      document.getElementById("featureCounts").innerHTML = `
+        <p><strong>Filtret matchade:</strong> ${numberMatched}</p>
+        <p><strong>API:et returnerade:</strong> ${numberReturned}</p>
+      `;
+
+      if (!isNaN(numberMatched) && !isNaN(numberReturned) && Number(numberMatched) > Number(numberReturned)) {
+        showToast(
+          `⚠️ Alla ${numberMatched} rader kunde inte returneras (max 50 000). Förfina filtret eller ladda ner som ZIP.`,
+          "error", 6000
+        );
+      } else {
+        showToast(`✓ ${numberReturned} poster hämtade.`, "success");
+      }
+
+      if (API_URL.includes("/collections/analysresultat")) handlePaging(result);
+
+      updateTable(features, selectedAttributes);
+      updateMap(features, selectedAttributes);
+      updateApiLink(fullApiUrl);
+
+      // Länkade tabeller
+      const provplatsIds = extractUniqueIds(features, "nationellt_provplatsid");
+      const brunnsIds    = extractUniqueIds(features, "brunnsid");
+
+      updateAnalysisLink(provplatsIds);
+      updateBrunnsLagerLink(brunnsIds);
+
+      if (provplatsIds.length > 500) {
+        if (warn) {
+          warn.innerHTML    = `⚠️ ${provplatsIds.length} provplatser matchade filtret. Alla kan inte visas på kartan. Förfina filtret.`;
+          warn.style.display = "block";
+        }
+      } else {
+        updateProvplatserLink(provplatsIds, selectedAttributes);
+      }
+
+      // Diagram-knapp
+      const showChartBtn = document.getElementById("showChartBtn");
+      if (showChartBtn) {
+        const showChart = API_URL.includes("analysresultat-provplatser") ||
+                          API_URL.includes("grundvattennivaer-observerade/ogc/features/v1/collections/nivaer");
+        showChartBtn.style.display = showChart ? "inline-block" : "none";
+      }
+
+    } catch (error) {
+      console.error("Fel vid hämtning:", error);
+      document.getElementById("errorMsg").innerText = error.message;
+      showToast("Fel: " + error.message, "error", 6000);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  /** Hämtar unika ID-värden för ett givet attribut ur features */
+  function extractUniqueIds(features, attr) {
+    return [...new Set(features.map(f => f.properties[attr]).filter(Boolean))];
+  }
+
+
+  // ============================================================
+  //  PAGINERING
+  // ============================================================
+
+  function handlePaging(data) {
+    const nextLink = data.links?.find(l => l.rel === "next");
+    const btn = document.getElementById("downloadMoreBtn");
+    if (nextLink) {
+      btn.style.display    = "block";
+      btn.dataset.nextUrl  = nextLink.href;
+      document.getElementById("featureCounts").innerText = "50 000 rader returnerade – fler finns att ladda ner";
+    } else {
+      btn.style.display = "none";
+    }
+  }
+
+  async function downloadAllPages() {
+    let allFeatures = [...(window.lastFeatures || [])];
+    let nextUrl     = document.getElementById("downloadMoreBtn").dataset.nextUrl;
+    let pageCount   = 1;
+    setLoading(true, "Hämtar resterande sidor...");
+
+    try {
+      while (nextUrl) {
+        pageCount++;
+        setLoading(true, `Hämtar sida ${pageCount}...`);
+        const data  = await fetch(nextUrl).then(r => { if (!r.ok) throw new Error(`Sida ${pageCount}: status ${r.status}`); return r.json(); });
+        allFeatures = allFeatures.concat(data.features || []);
+        nextUrl     = data.links?.find(l => l.rel === "next")?.href ?? null;
+      }
+      exportToExcel(allFeatures, window.selectedAttributes, "alla_resultat.xlsx");
+      showToast(`✓ ${allFeatures.length} poster exporterade till Excel.`, "success");
+    } catch (err) {
+      console.error(err);
+      showToast("Fel vid hämtning av resterande data: " + err.message, "error", 5000);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  // ============================================================
+  //  TABELL
+  // ============================================================
+
+  function updateTable(features, selectedAttributes) {
+    const tableHead = document.getElementById("resultsHead");
+    const tableBody = document.getElementById("results");
+    tableHead.innerHTML = "";
+    tableBody.innerHTML = "";
+
+    if (!features.length) return;
+
+    tableHead.innerHTML = `<tr>${selectedAttributes.map(attr => `<th>${attr}</th>`).join("")}</tr>`;
+    tableBody.innerHTML = features.map(item => `
+      <tr>${selectedAttributes.map(attr => {
+        const value = item.properties[attr] || "";
+        return `<td>${value.toString().startsWith("https://")
+          ? `<a href="${value}" target="link">${value}</a>`
+          : value}</td>`;
+      }).join("")}</tr>
+    `).join("");
+  }
+
+
+  // ============================================================
+  //  API-LÄNKAR OCH KLIPPTAVLA
+  // ============================================================
+
+  function updateApiLink(url) {
+    const el = document.getElementById("apiLink");
+    if (!el) return;
+
+    const clean = url.replace(/f=[^&]+/g, "");
+    const base  = clean.endsWith("&") || clean.endsWith("?") ? clean.slice(0, -1) : clean;
+    const sep   = base.includes("?") ? "&" : "?";
+
+    const jsonUrl = `${base}${sep}f=application/json`;
+    const csvUrl  = `${base}${sep}f=text/csv`;
+    const htmlUrl = `${base}${sep}f=text/html`;
+
+    el.innerHTML = `
+      <p><strong>JSON:</strong> <a href="${jsonUrl}" target="_blank">öppna</a></p>
+      <p><strong>CSV:</strong>  <a href="${csvUrl}"  target="_blank">öppna</a></p>
+      <p><strong>HTML:</strong> <a href="${htmlUrl}&limit=50" target="_blank">öppna (första 50 raderna)</a></p>
+    `;
+  }
+
+  document.getElementById("copyButton").addEventListener("click", () => {
+    const link = document.querySelector("#apiLink a");
+    if (link) {
+      navigator.clipboard.writeText(link.href)
+        .then(() => showToast("✓ JSON-länk kopierad!", "success"))
+        .catch(() => showToast("Kunde inte kopiera länken.", "error"));
+    } else {
+      showToast("Ingen JSON-länk hittades.", "info");
+    }
+  });
+
+  document.getElementById("copyCsvBtn").addEventListener("click", () => {
+    const links = document.querySelectorAll("#apiLink a");
+    if (links.length >= 2) {
+      navigator.clipboard.writeText(links[1].href)
+        .then(() => showToast("✓ CSV-länk kopierad!", "success"))
+        .catch(() => showToast("Kunde inte kopiera länken.", "error"));
+    } else {
+      showToast("Ingen CSV-länk hittades.", "info");
+    }
+  });
+
+
+  // ============================================================
+  //  LÄNKADE TABELLER (analysresultat, provplatser, brunnar)
+  // ============================================================
+
+  function updateAnalysisLink(ids) {
+    const container = document.getElementById("analysisLinkContainer");
+    container.style.display = "none";
+
+    if (!ids?.length || !PROVPLATSER_APIS.includes(API_URL)) {
+      ["analysisLink", "analysisLinkHtml", "analysisLinkExcel"].forEach(id =>
+        document.getElementById(id).innerHTML = "");
+      return;
+    }
+
+    const baseUrl           = API_URL.split("/collections/provplatser/items")[0];
+    const baseCollectionUrl = `${baseUrl}/collections/analysresultat/items`;
+    const idsParam          = ids.join("%2C%20");
+    const urlCsv            = `${baseCollectionUrl}?filter=nationellt_provplatsid%20IN%20(${idsParam})&f=text/csv`;
+    const urlHtml           = `${baseCollectionUrl}?filter=nationellt_provplatsid%20IN%20(${idsParam})&f=text/html&limit=50`;
+
+    document.getElementById("analysisLink").innerHTML     = `<a href="${urlCsv}"  target="_blank">Hämta analysdata som CSV</a>`;
+    document.getElementById("analysisLinkHtml").innerHTML  = `<a href="${urlHtml}" target="_blank">Visa analysdata (webbsida, första 50 raderna)</a>`;
+    document.getElementById("analysisLinkExcel").innerHTML = excelButton(baseCollectionUrl, "nationellt_provplatsid", ids, "analysdata.xlsx", "Ladda ner analysdata som Excel (.xlsx)");
+    container.style.display = "block";
+  }
+
+  function updateProvplatserLink(ids, selectedAttributes) {
+    const container = document.getElementById("provplatserLinkContainer");
+    if (!container) return;
+    container.style.display = "none";
+
+    if (!ids?.length || !ANALYSRESULTAT_APIS.includes(API_URL)) {
+      ["provplatserLink", "provplatserLinkHtml", "provplatserLinkExcel"].forEach(id =>
+        document.getElementById(id).innerHTML = "");
+      return;
+    }
+
+    const baseUrl           = API_URL.split("/collections/analysresultat/items")[0];
+    const baseCollectionUrl = `${baseUrl}/collections/provplatser/items`;
+    const idsParam          = ids.join("%2C%20");
+    const urlCsv            = `${baseCollectionUrl}?filter=nationellt_provplatsid%20IN%20(${idsParam})&f=text/csv`;
+    const urlHtml           = `${baseCollectionUrl}?filter=nationellt_provplatsid%20IN%20(${idsParam})&f=text/html`;
+    const urlJson           = `${baseCollectionUrl}?filter=nationellt_provplatsid%20IN%20(${idsParam})&f=application%2Fjson`;
+
+    document.getElementById("provplatserLink").innerHTML     = `<a href="${urlCsv}"  target="_blank">Ladda ner provplatsinfo som CSV</a>`;
+    document.getElementById("provplatserLinkHtml").innerHTML  = `<a href="${urlHtml}" target="_blank">Visa provplatsinfo (webbsida)</a>`;
+    document.getElementById("provplatserLinkExcel").innerHTML = excelButton(baseCollectionUrl, "nationellt_provplatsid", ids, "provplatser.xlsx", "Ladda ner provplatsinfo som Excel (.xlsx)");
+    container.style.display = "block";
+
+    fetchProvplatserData(urlJson, selectedAttributes);
+  }
+
+  function updateBrunnsLagerLink(ids) {
+    const container = document.getElementById("brunnsLagerLinkContainer");
+    container.style.display = "none";
+
+    const BRUNNAR_API = "https://api.sgu.se/oppnadata/brunnar/ogc/features/v1/collections/brunnar/items";
+    if (!ids?.length || API_URL !== BRUNNAR_API) {
+      ["brunnsLagerLink", "brunnsLagerLinkHtml", "brunnsLagerLinkExcel"].forEach(id =>
+        document.getElementById(id).innerHTML = "");
+      return;
+    }
+
+    const baseCollectionUrl = `https://api.sgu.se/oppnadata/brunnar/ogc/features/v1/collections/brunnar-lager/items`;
+    const idsParam          = ids.join("%2C%20");
+    const urlCsv            = `${baseCollectionUrl}?filter=brunnsid%20IN%20(${idsParam})&f=text/csv`;
+    const urlHtml           = `${baseCollectionUrl}?filter=brunnsid%20IN%20(${idsParam})&f=text/html&limit=50`;
+
+    document.getElementById("brunnsLagerLink").innerHTML     = `<a href="${urlCsv}"  target="_blank">Hämta lagerinformation om brunnarna som CSV</a>`;
+    document.getElementById("brunnsLagerLinkHtml").innerHTML  = `<a href="${urlHtml}" target="_blank">Visa lagerinformation om brunnarna (max 50 rader)</a>`;
+    document.getElementById("brunnsLagerLinkExcel").innerHTML = excelButton(baseCollectionUrl, "brunnsid", ids, "brunnsLagerdata.xlsx", "Ladda ner lagerinformation som Excel (.xlsx)");
+    container.style.display = "block";
+  }
+
+  /** Hjälpfunktion: returnerar HTML för Excel-nedladdningsknapp med batchad paging-stöd */
+  function excelButton(baseCollectionUrl, idField, ids, filename, label) {
+    // Spara ids som JSON i ett data-attribut på knappen för att undvika långa URL:er i onclick
+    const btnId = "excelBtn_" + Math.random().toString(36).slice(2, 8);
+    // Använd setTimeout så att elementet hinner renderas innan vi sätter data
+    setTimeout(() => {
+      const btn = document.getElementById(btnId);
+      if (btn) {
+        btn._excelMeta = { baseCollectionUrl, idField, ids, filename };
+      }
+    }, 0);
+    return `
+      <button id="${btnId}" onclick="downloadLinkedExcel(this)" style="margin-top:10px;">
+        <img src="https://cdn-icons-png.flaticon.com/512/732/732220.png" alt="Excel" style="height:20px; vertical-align:middle; margin-right:5px;">
+        ${label}
+      </button>`;
+  }
+
+  /**
+   * Laddar ner länkad data som Excel med automatisk batchning och paging.
+   * Delar upp ID-listan i batcher om max 50 st för att undvika 502-fel p.g.a. för långa URL:er.
+   * @param {HTMLElement} btn - Knapp-elementet med _excelMeta-data
+   */
+  async function downloadLinkedExcel(btn) {
+    const meta = btn._excelMeta;
+    if (!meta) { showToast("Konfigurationsfel – metadata saknas på knappen.", "error"); return; }
+
+    const { baseCollectionUrl, idField, ids, filename } = meta;
+    const BATCH_SIZE = 50;
+    const batches = [];
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+      batches.push(ids.slice(i, i + BATCH_SIZE));
+    }
+
+    setLoading(true, `Hämtar batch 1 av ${batches.length}...`);
+    let allFeatures = [];
+    let totalPages  = 0;
+
+    try {
+      for (let b = 0; b < batches.length; b++) {
+        setLoading(true, `Hämtar batch ${b + 1} av ${batches.length}...`);
+        const idsParam = batches[b].join(",");
+        const filterStr = encodeURIComponent(`${idField} IN (${idsParam})`);
+        let nextUrl = `${baseCollectionUrl}?filter=${filterStr}&f=application%2Fjson`;
+
+        while (nextUrl) {
+          totalPages++;
+          const response = await fetch(nextUrl);
+          if (!response.ok) {
+            const msg = {
+              400: "Ogiltigt filter (400).",
+              403: "Åtkomst nekad (403).",
+              404: "Endpoint hittades inte (404).",
+              500: "Serverfel (500), försök igen.",
+              502: "API-gateway fel (502) – servern kunde inte svara. Försök igen.",
+              503: "API tillfälligt otillgängligt (503)."
+            }[response.status] || `HTTP-fel ${response.status}`;
+            throw new Error(msg);
+          }
+          const data = await response.json();
+          allFeatures = allFeatures.concat(data.features || []);
+          const nextLink = data.links?.find(l => l.rel === "next");
+          nextUrl = nextLink ? nextLink.href : null;
+        }
+      }
+
+      if (!allFeatures.length) {
+        showToast("Inga poster att exportera.", "info");
+        return;
+      }
+
+      exportToExcel(allFeatures, null, filename);
+      showToast(`✓ ${allFeatures.length} poster exporterade till Excel (${batches.length} batch${batches.length > 1 ? "ar" : ""}, ${totalPages} sida${totalPages > 1 ? "r" : ""}).`, "success", 6000);
+
+    } catch (err) {
+      console.error("downloadLinkedExcel fel:", err);
+      showToast("Fel vid Excel-export: " + err.message, "error", 6000);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Behålls för bakåtkompatibilitet
+  async function downloadExcelFromCsv(csvUrl, fileName) {
+    showToast("Använd Excel-knappen ovan för nedladdning med stöd för stora datamängder.", "info", 5000);
+  }
+
+  async function fetchProvplatserData(url, selectedAttributes) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`API svarade ${response.status}`);
+      const data = await response.json();
+      updateProvplatsMap(data.features);
+    } catch (error) {
+      console.warn("Provplatser kunde inte hämtas:", error);
+      const warn = document.getElementById("mapWarning");
+      if (warn) {
+        warn.innerHTML    = "⚠️ För många provplatser matchade filtret. Alla punkter kan inte visas på kartan.";
+        warn.style.display = "block";
+      }
+    }
+  }
+
+
+  // ============================================================
+  //  EXCEL-EXPORT
+  // ============================================================
+
+  function downloadExcel() {
+    const tableHead = document.getElementById("resultsHead");
+    const tableBody = document.getElementById("results");
+
+    if (!tableBody || !tableBody.rows.length) {
+      showToast("Ingen data att ladda ner – gör en sökning först.", "info");
+      return;
+    }
+
+    const headers = Array.from(tableHead.querySelectorAll("th")).map(th => th.innerText);
+    const rows    = Array.from(tableBody.querySelectorAll("tr")).map(tr =>
+      Array.from(tr.querySelectorAll("td")).map(td => td.innerText)
+    );
+
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Resultat");
+    XLSX.writeFile(wb, "filtrerat_resultat.xlsx");
+    showToast("✓ Excel-fil nedladdad.", "success");
+  }
+
+  /**
+   * Exporterar features till Excel eller CSV beroende på datamängd.
+   * Under 100 000 rader: Excel (.xlsx) via SheetJS.
+   * 100 000+ rader: CSV via Blob (SheetJS klarar inte så stora mängder i webbläsaren).
+   */
+  function exportToExcel(features, selectedAttrs, fileName) {
+    if (!features?.length) { showToast("Inga poster att exportera.", "info"); return; }
+
+    // Samla alla unika kolumnnamn från samtliga features
+    if (!selectedAttrs?.length) {
+      const colSet = new Set();
+      features.forEach(f => Object.keys(f.properties || {}).forEach(k => colSet.add(k)));
+      selectedAttrs = Array.from(colSet);
+    }
+
+    const ROW_LIMIT = 100_000;
+
+    if (features.length >= ROW_LIMIT) {
+      // ===== CSV-export för stora datamängder =====
+      const csvFileName = (fileName || "resultat").replace(/\.xlsx$/i, ".csv");
+      const escapeCell = v => {
+        if (v == null) return "";
+        const s = String(v);
+        return s.includes(",") || s.includes('"') || s.includes("\n")
+          ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const lines = [selectedAttrs.map(escapeCell).join(",")];
+      features.forEach(f =>
+        lines.push(selectedAttrs.map(attr => escapeCell(f.properties?.[attr])).join(","))
+      );
+      const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8;" });
+      const link = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: csvFileName });
+      document.body.appendChild(link); link.click(); document.body.removeChild(link);
+      showToast(`✓ ${features.length.toLocaleString()} rader – för stor för Excel, sparad som CSV (${csvFileName}).`, "info", 8000);
+
+    } else {
+      // ===== Excel-export för mindre datamängder =====
+      const rows = features.map(f =>
+        selectedAttrs.map(attr => { const v = f.properties?.[attr]; return v == null ? "" : v; })
+      );
+      const ws = XLSX.utils.aoa_to_sheet([selectedAttrs, ...rows]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Resultat");
+      XLSX.writeFile(wb, fileName || "resultat.xlsx");
+    }
+  }
+
+  async function downloadExcelFromCsv(csvUrl, fileName) {
+    setLoading(true, "Förbereder Excel-fil...");
+    try {
+      const response = await fetch(csvUrl);
+      if (!response.ok) throw new Error("HTTP-fel " + response.status);
+      const csvText     = await response.text();
+      const workbook    = XLSX.read(csvText, { type: "string", raw: false });
+      const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      const blob        = new Blob([excelBuffer], { type: "application/octet-stream" });
+      const link        = Object.assign(document.createElement("a"), { href: URL.createObjectURL(blob), download: fileName });
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast("✓ Excel-fil nedladdad.", "success");
+    } catch (error) {
+      showToast("Fel vid Excel-export: " + error.message, "error", 5000);
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+
+  // ============================================================
+  //  PDF OCH ZIP
+  // ============================================================
+
+  function extractProductName(apiUrl) {
+    const match = apiUrl.match(/oppnadata\/(.+?)\/ogc/);
+    return match ? match[1] : null;
+  }
+
+  function openPDF() {
+    const product = extractProductName(document.getElementById("apiSelector").value);
+    if (product) window.open(`https://resource.sgu.se/dokument/produkter/${product}-beskrivning.pdf`, "_blank");
+    else showToast("Kunde inte identifiera produktnamn för PDF.", "error");
+  }
+
+  function downloadZIP() {
+    const product = extractProductName(document.getElementById("apiSelector").value);
+    if (product) window.open(`https://resource.sgu.se/data/oppnadata/${product}/${product}.zip`, "_blank");
+    else showToast("Kunde inte identifiera produktnamn för ZIP-fil.", "error");
+  }
+
+
+  // ============================================================
+  //  ANALYSDIAGRAM
+  // ============================================================
+
+  function openChartDialog()  { document.getElementById("chartDialog").style.display = "block"; }
+  function closeChartDialog() {
+    document.getElementById("chartDialog").style.display = "none";
+    chartDialogOpened = false;
+  }
+
+  // Drag-funktionalitet för dialog
+  (() => {
+    const dialog = document.getElementById("chartDialog");
+    const header = document.getElementById("chartDialogHeader");
+    let drag = false, offsetX = 0, offsetY = 0;
+
+    header.addEventListener("mousedown", (e) => {
+      drag = true;
+      offsetX = e.clientX - dialog.offsetLeft;
+      offsetY = e.clientY - dialog.offsetTop;
+      header.style.cursor = "grabbing";
+    });
+    document.addEventListener("mouseup",   () => { drag = false; header.style.cursor = "move"; });
+    document.addEventListener("mousemove", (e) => {
+      if (!drag) return;
+      dialog.style.left = (e.clientX - offsetX) + "px";
+      dialog.style.top  = (e.clientY - offsetY) + "px";
+    });
+  })();
+
+  function maybeShowAnalysisChart(features) {
+    const isAnalys   = API_URL.includes("analysresultat-provplatser");
+    const isNivaer   = API_URL.includes("grundvattennivaer-observerade/ogc/features/v1/collections/nivaer");
+    if (!features?.length || (!isAnalys && !isNivaer)) return;
+
+    chartDialogOpened = true;
+    openChartDialog();
+
+    const isMiljogifter = API_URL.includes("miljogifter-analysresultat-provplatser") || API_URL.includes("grundvattenkvalitet-analysresultat-provplatser-v2");
+    const isGrundvatten = API_URL.includes("grundvattenkvalitet-analysresultat-provplatser") && !API_URL.includes("-v2");
+
+    const provplatsSelect = document.getElementById("provplatsSelect");
+    const paramSelect     = document.getElementById("paramSelect");
+    const paramLabel      = paramSelect.previousElementSibling;
+
+    if (isNivaer) {
+      // Grundvattennivåer: gruppera per platsbeteckning, inget parameterval behövs
+      const uniqueIds = [...new Set(features.map(f => f.properties.platsbeteckning).filter(Boolean))];
+      provplatsSelect.innerHTML = uniqueIds.map(id => `<option value="${id}">${id}</option>`).join("");
+      paramSelect.innerHTML     = `<option value="grundvattenniva_m_urok" selected>grundvattenniva_m_urok</option>`;
+      paramSelect.style.display        = "none";
+      if (paramLabel) paramLabel.style.display = "none";
+      const pw = document.getElementById("paramWrapper");
+      if (pw) pw.style.display = "none";
+    } else {
+      // Analysresultat: gruppera per provplatsid och parameter
+      const uniqueIds    = [...new Set(features.map(f => f.properties.nationellt_provplatsid))];
+      const uniqueParams = [...new Set(features.map(f => {
+        if (isMiljogifter) return f.properties.parameternamn;
+        if (isGrundvatten) return f.properties.param;
+      }).filter(Boolean))];
+      provplatsSelect.innerHTML = uniqueIds.map(id => `<option value="${id}">${id}</option>`).join("");
+      paramSelect.innerHTML     = uniqueParams.map(p => `<option value="${p}">${p}</option>`).join("");
+      paramSelect.style.display = "";
+      if (paramLabel) paramLabel.style.display = "";
+    }
+
+    provplatsSelect.multiple = true;
+    paramSelect.multiple     = true;
+    provplatsSelect.onchange = () => updateChart(features);
+    paramSelect.onchange     = () => updateChart(features);
+
+    updateChart(features);
+  }
+
+  function updateChart(features) {
+    if (!chartDialogOpened) return;
+
+    const provplatsSelect     = document.getElementById("provplatsSelect");
+    const paramSelect         = document.getElementById("paramSelect");
+    const ctx                 = document.getElementById("analysisChart").getContext("2d");
+    const selectedProvplatser = [...provplatsSelect.selectedOptions].map(o => o.value);
+    const selectedParams      = [...paramSelect.selectedOptions].map(o => o.value);
+
+    const isNivaer      = API_URL.includes("grundvattennivaer-observerade/ogc/features/v1/collections/nivaer");
+    const isMiljogifter = API_URL.includes("miljogifter-analysresultat-provplatser") || API_URL.includes("grundvattenkvalitet-analysresultat-provplatser-v2");
+    const isGrundvatten = API_URL.includes("grundvattenkvalitet-analysresultat-provplatser") && !API_URL.includes("-v2");
+
+    if (!selectedProvplatser.length || (!isNivaer && !selectedParams.length)) {
+      if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+      return;
+    }
+
+    const datasets = [];
+
+    if (isNivaer) {
+      // ===== Grundvattennivåer: stationsid → grundvattenniva_m_urok vs obsdatum =====
+      selectedProvplatser.forEach(platsbeteckning => {
+        const filtered = features.filter(f => String(f.properties.platsbeteckning) === String(platsbeteckning));
+        if (!filtered.length) return;
+
+        const points = filtered
+          .map(f => ({
+            x: new Date(f.properties.obsdatum),
+            y: parseFloat(f.properties.grundvattenniva_m_urok) * -1
+          }))
+          .filter(p => !isNaN(p.y) && !isNaN(p.x.getTime()))
+          .sort((a, b) => a.x - b.x);
+
+        if (!points.length) return;
+
+        datasets.push({
+          label: `${platsbeteckning} – grundvattennivå (m u.r.o.k.)`,
+          data:  points,
+          borderWidth: 2,
+          tension: 0.2,
+          pointRadius: 2,
+          pointBackgroundColor: SGU_COLOR,
+          pointBorderColor:     SGU_COLOR
+        });
+      });
+
+    } else {
+      // ===== Analysresultat: provplatsid + parameter → matvardetal vs provtagningsdatum =====
+      selectedProvplatser.forEach(provplats => {
+        selectedParams.forEach(param => {
+          const filtered = features.filter(f =>
+            String(f.properties.nationellt_provplatsid) === String(provplats) &&
+            ((isMiljogifter && f.properties.parameternamn === param) || (isGrundvatten && f.properties.param === param))
+          );
+          if (!filtered.length) return;
+
+          const unit   = filtered.find(f => f.properties.enhet)?.properties.enhet || "";
+          const points = filtered
+            .map(f => ({
+              x:   new Date(f.properties.provtagningsdatum || f.properties.provtagningsdat),
+              y:   parseFloat(f.properties.matvardetal),
+              anm: f.properties.matvardetal_anm || f.properties.matvardetalanm
+            }))
+            .filter(p => !isNaN(p.y) && !isNaN(p.x.getTime()))
+            .sort((a, b) => a.x - b.x);
+
+          if (!points.length) return;
+
+          datasets.push({
+            label: `${provplats} – ${param}${unit ? " (" + unit + ")" : ""}`,
+            data:  points,
+            borderWidth: 2,
+            tension: 0,
+            pointStyle:           ctx => ctx.raw?.anm === "<" ? "triangle" : "circle",
+            pointRadius:          ctx => ctx.raw?.anm === "<" ? 7 : 3,
+            pointBackgroundColor: ctx => ctx.raw?.anm === "<" ? "red" : SGU_COLOR,
+            pointBorderColor:     ctx => ctx.raw?.anm === "<" ? "red" : SGU_COLOR
+          });
+        });
+      });
+    }
+
+    if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+    if (!datasets.length) return;
+
+    const xLabel = isNivaer ? "Observationsdatum" : "Provtagningsdatum";
+    const yLabel = isNivaer ? "Grundvattennivå (m under referensyta)" : "Mätvärde";
+
+    // Tilldela varje dataset en färg ur SGU-paletten
+    const palette = ["#410532","#c6538c","#007bbd","#e07b00","#2e7d32","#6a1b9a","#00838f","#ad1457"];
+    datasets.forEach((ds, i) => {
+      const color = palette[i % palette.length];
+      ds.borderColor          = color;
+      ds.backgroundColor      = color + "22";  // lätt fyllning under linjen
+      ds.fill                 = true;
+      if (!isNivaer) {
+        // Behåll röd triangel för detektionsgränsvärden, annars dataset-färg
+        ds.pointBackgroundColor = ctx => ctx.raw?.anm === "<" ? "#e53935" : color;
+        ds.pointBorderColor     = ctx => ctx.raw?.anm === "<" ? "#e53935" : color;
+      } else {
+        ds.pointBackgroundColor = color;
+        ds.pointBorderColor     = color;
+      }
+    });
+
+    chartInstance = new Chart(ctx, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: true,
+        interaction: { mode: "index", intersect: false },
+        scales: {
+          x: {
+            type: "time",
+            grid: { color: "#f0e8ee" },
+            title: { display: true, text: xLabel, color: "#410532", font: { weight: "bold", size: 12 } },
+            ticks: { color: "#555", maxRotation: 30 }
+          },
+          y: {
+            grid: { color: "#f0e8ee" },
+            title: { display: true, text: yLabel, color: "#410532", font: { weight: "bold", size: 12 } },
+            ticks: { color: "#555" }
+          }
+        },
+        plugins: {
+          legend: {
+            position: "top",
+            labels: { color: "#2a0220", font: { size: 12 }, padding: 14, usePointStyle: true }
+          },
+          tooltip: {
+            backgroundColor: "rgba(65,5,50,0.92)",
+            titleColor: "#f5dff0",
+            bodyColor: "white",
+            borderColor: "#c6538c",
+            borderWidth: 1,
+            padding: 10,
+            callbacks: {
+              label: ctx => {
+                const p       = ctx.raw;
+                const unitTxt = ctx.dataset.label.match(/\((.*?)\)/)?.[1] || "";
+                return isNivaer
+                  ? `  ${ctx.dataset.label}: ${p.y} m`
+                  : `  ${ctx.dataset.label}: ${p.anm || ""}${p.y}${unitTxt ? " " + unitTxt : ""}`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+
+  // ============================================================
+  //  INITIERING
+  // ============================================================
+  document.addEventListener("DOMContentLoaded", () => {
+    // Karta – initieras här så att #map-elementet garanterat finns i DOM
+    map = L.map("map").setView([62, 15], 5);
+
+    L.control.scale({ position: "bottomright", imperial: false, metric: true, maxWidth: 200 }).addTo(map);
+
+    const osmLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors"
+    });
+    const esriSatellite = L.tileLayer(
+      "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+      attribution: "&copy; Esri – Maxar, Earthstar Geographics"
+    });
+
+    const wmsLayer           = L.tileLayer.wms("https://maps3.sgu.se/geoserver/inspire/AM.WaterBodyForWFD/ows?SERVICE=WMS&",                { layers: "AM.WaterBodyForWFD",                                              format: "image/png", transparent: true, attribution: "Inspire GroundwaterBody by SGU" });
+    const wmsLayer2          = L.tileLayer.wms("https://maps3.sgu.se/geoserver/grundvatten/SE.GOV.SGU.KALLOR.1M/ows?SERVICE=WMS&",          { layers: "grundvatten:SE.GOV.SGU.KALLOR.1M",                                format: "image/png", transparent: true, attribution: "SGU, källor" });
+    const wmsLayer_nat       = L.tileLayer.wms("https://maps3.sgu.se/geoserver/grundvatten/ows?SERVICE=WMS&",                               { layers: "grundvatten:SE.GOV.SGU.NATIONELL_MILJOOVERVAKNING_GRUNDVATTEN_VY", format: "image/png", transparent: true, attribution: "SGU" });
+    const wmsLayer_reg       = L.tileLayer.wms("https://maps3.sgu.se/geoserver/grundvatten/ows?SERVICE=WMS&",                               { layers: "grundvatten:SE.GOV.SGU.REGIONAL_MILJOOVERVAKNING_GRUNDVATTEN_VY",  format: "image/png", transparent: true, attribution: "SGU, Länsstyrelserna" });
+    const wmsLayer_stnreg    = L.tileLayer.wms("https://stationsregister.miljodatasamverkan.se/geoserver/stationsregistret/ows?SERVICE=WMS&",{ layers: "active_site", CQL_FILTER: "datahost_id=3",                        format: "image/png", transparent: true, attribution: "Nationella stationsregistret" });
+    const wmsLayer_stnregmg  = L.tileLayer.wms("https://stationsregister.miljodatasamverkan.se/geoserver/stationsregistret/ows?SERVICE=WMS&",{ layers: "active_site", CQL_FILTER: "datahost_id=6",                        format: "image/png", transparent: true, attribution: "Nationella stationsregistret" });
+    const wmsLayer_varo      = L.tileLayer.wms("https://opendata-view.smhi.se/SMHI_vatten/Vattenforekomstavrinningsomraden_2022/ows?SERVICE=WMS&", { layers: "Vattenforekomstavrinningsomraden_2022",                       format: "image/png", transparent: true, attribution: "SMHI" });
+    const wmsLayer_jordart   = L.tileLayer.wms("https://maps3.sgu.se/geoserver/jord/ows?SERVICE=WMS&",                                      { layers: "jord:SE.GOV.SGU.JORD.GRUNDLAGER.25K",                             format: "image/png", transparent: true, opacity: 0.4, attribution: "SGU, Jordartskartan 25–100K" });
+    const wmsLayer_vattenskyddsomr = L.tileLayer.wms("https://geodata.naturvardsverket.se/inspire/am-restriction/ows?SERVICE=WMS&",          { layers: "AM.drinkingWaterProtectionArea",                                   format: "image/png", transparent: true, attribution: "Naturvårdsverket" });
+
+    osmLayer.addTo(map);
+
+    L.control.layers(
+      { "OpenStreetMap": osmLayer, "Esri Satellite": esriSatellite },
+      {
+        "Grundvattenförekomster": wmsLayer,
+        "Källor i SGUs databas": wmsLayer2,
+        "Nationell grundvattenövervakning, SGU": wmsLayer_nat,
+        "Regional grundvattenövervakning": wmsLayer_reg,
+        "Provplatser grundvatten, stationsreg": wmsLayer_stnreg,
+        "Provplatser dv miljögifter, stationsreg": wmsLayer_stnregmg,
+        "Vattenskyddsområden": wmsLayer_vattenskyddsomr,
+        "Jordartskartan 25–100K": wmsLayer_jordart,
+        "Vattenförekomstavrinningsområden 2022": wmsLayer_varo
+      }
+    ).addTo(map);
+
+    geoJsonLayer = L.geoJSON(null).addTo(map);
+
+    // ===== WMS GetFeatureInfo – klick på alla aktiva WMS-bakgrundslager =====
+    const wmsInfoLayers = [
+      { layer: wmsLayer,          url: "https://maps3.sgu.se/geoserver/inspire/AM.WaterBodyForWFD/ows",                                        name: "AM.WaterBodyForWFD",                                              label: "Grundvattenförekomster" },
+      { layer: wmsLayer2,         url: "https://maps3.sgu.se/geoserver/grundvatten/SE.GOV.SGU.KALLOR.1M/ows",                                   name: "grundvatten:SE.GOV.SGU.KALLOR.1M",                                label: "Källor" },
+      { layer: wmsLayer_nat,      url: "https://maps3.sgu.se/geoserver/grundvatten/ows",                                                        name: "grundvatten:SE.GOV.SGU.NATIONELL_MILJOOVERVAKNING_GRUNDVATTEN_VY", label: "Nationell grundvattenövervakning" },
+      { layer: wmsLayer_reg,      url: "https://maps3.sgu.se/geoserver/grundvatten/ows",                                                        name: "grundvatten:SE.GOV.SGU.REGIONAL_MILJOOVERVAKNING_GRUNDVATTEN_VY",  label: "Regional grundvattenövervakning" },
+      { layer: wmsLayer_stnreg,   url: "https://stationsregister.miljodatasamverkan.se/geoserver/stationsregistret/ows",                        name: "active_site",                                                     label: "Provplatser grundvatten" },
+      { layer: wmsLayer_stnregmg, url: "https://stationsregister.miljodatasamverkan.se/geoserver/stationsregistret/ows",                        name: "active_site",                                                     label: "Provplatser miljögifter" },
+      { layer: wmsLayer_varo,     url: "https://opendata-view.smhi.se/SMHI_vatten/Vattenforekomstavrinningsomraden_2022/ows",                   name: "Vattenforekomstavrinningsomraden_2022",                            label: "Vattenförekomstavrinningsområden" },
+      { layer: wmsLayer_jordart,  url: "https://maps3.sgu.se/geoserver/jord/ows",                                                               name: "jord:SE.GOV.SGU.JORD.GRUNDLAGER.25K",                             label: "Jordartskartan" },
+      { layer: wmsLayer_vattenskyddsomr, url: "https://geodata.naturvardsverket.se/inspire/am-restriction/ows",                                 name: "AM.drinkingWaterProtectionArea",                                  label: "Vattenskyddsområden" },
+    ];
+
+    map.on("click", async (e) => {
+      // Hämta alla aktiva WMS-lager
+      const activeLayers = wmsInfoLayers.filter(cfg => map.hasLayer(cfg.layer));
+      if (!activeLayers.length) return;
+
+      const size   = map.getSize();
+      const bounds = map.getBounds();
+      const sw     = map.options.crs.project(bounds.getSouthWest());
+      const ne     = map.options.crs.project(bounds.getNorthEast());
+      const point  = map.latLngToContainerPoint(e.latlng);
+
+      // Anropa GetFeatureInfo för alla aktiva lager parallellt
+      const results = await Promise.allSettled(activeLayers.map(async cfg => {
+        const params = new URLSearchParams({
+          SERVICE:       "WMS",
+          VERSION:       "1.1.1",
+          REQUEST:       "GetFeatureInfo",
+          LAYERS:        cfg.name,
+          QUERY_LAYERS:  cfg.name,
+          STYLES:        "",
+          BBOX:          `${sw.x},${sw.y},${ne.x},${ne.y}`,
+          WIDTH:         size.x,
+          HEIGHT:        size.y,
+          SRS:           "EPSG:3857",
+          X:             Math.round(point.x),
+          Y:             Math.round(point.y),
+          INFO_FORMAT:   "application/json",
+          FEATURE_COUNT: 5
+        });
+        const res = await fetch(`${cfg.url}?${params}`);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        return { label: cfg.label, features: data.features || [] };
+      }));
+
+      // Samla alla träffar
+      const hits = results
+        .filter(r => r.status === "fulfilled" && r.value.features.length > 0)
+        .map(r => r.value);
+
+      if (!hits.length) {
+        L.popup().setLatLng(e.latlng)
+          .setContent("<i style='color:#666;'>Inget WMS-lager hade en feature här.</i>")
+          .openOn(map);
+        return;
+      }
+
+      // Bygg popup – ett avsnitt per lager
+      const content = hits.map(({ label, features }) => {
+        const featureHtml = features.map(f => {
+          const rows = Object.entries(f.properties || {})
+            .filter(([, v]) => v !== null && v !== "")
+            .map(([k, v]) => `
+              <tr>
+                <td style="font-weight:bold;padding:2px 8px 2px 0;color:#410532;white-space:nowrap;">${k}</td>
+                <td style="padding:2px 0;">${v}</td>
+              </tr>`)
+            .join("");
+          return `<table style="font-size:13px;border-collapse:collapse;width:100%;">${rows}</table>`;
+        }).join("<hr style='margin:4px 0;border-color:#f0e0ec;'>");
+
+        return `
+          <div style="margin-bottom:8px;">
+            <div style="background:#410532;color:white;padding:4px 8px;border-radius:4px;font-weight:bold;font-size:12px;margin-bottom:6px;">
+              ${label}
+            </div>
+            ${featureHtml}
+          </div>`;
+      }).join("<hr style='margin:8px 0;border-color:#c8a0bc;border-width:2px;'>");
+
+      L.popup({ maxWidth: 420, maxHeight: 340 })
+        .setLatLng(e.latlng)
+        .setContent(`<div style="overflow-y:auto;max-height:300px;padding-right:4px;">${content}</div>`)
+        .openOn(map);
+    });
+
+    const LocateControl = L.Control.extend({
+      options: { position: "topleft" },
+      onAdd() {
+        const container = L.DomUtil.create("div", "leaflet-bar leaflet-control");
+        const button    = L.DomUtil.create("a", "", container);
+        button.innerHTML = "📍";
+        button.href      = "#";
+        button.title     = "Visa min position";
+        L.DomEvent.on(button, "click", (e) => { L.DomEvent.preventDefault(e); toggleUserLocation(); });
+        return container;
+      }
+    });
+    map.addControl(new LocateControl());
+
+    // Övriga event-lyssnare
+    document.getElementById("apiSelector").addEventListener("change", changeAPI);
+    document.getElementById("addFilterBtn").addEventListener("click", addFilter);
+    changeAPI();
+  });
+
+  </script>
+</body>
+</html>
